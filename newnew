@@ -204,16 +204,18 @@ class PerformanceTab(tk.Frame):
         minutes = int((uptime % 3600) // 60)
         seconds = int(uptime % 60)
         self.info_labels["Время работы"].config(text=f"{hours}:{minutes:02d}:{seconds:02d}")
-    
-    # Если текущая метрика - CPU, показываем детальную информацию
+        
+    # Обновляем детали в зависимости от текущей метрики
         if self.current_metric == 'cpu':
             self._update_cpu_details(system_info)
         elif self.current_metric == 'memory':
             self._update_memory_details(system_info)
-        else:
-        # Если не CPU или память - скрываем детали
-            if hasattr(self, 'details_frame'):
-                self.details_frame.place_forget()
+        elif self.current_metric == 'disk':
+            self._update_disk_details(system_info)
+        elif self.current_metric == 'network':
+            self._update_ethernet_details(system_info)
+        elif self.current_metric == 'gpu':
+            self._update_gpu_details(system_info)
 
     def _update_cpu_details(self, system_info):
     #"""Обновляет панель с детальной информацией о процессоре"""
@@ -264,32 +266,34 @@ class PerformanceTab(tk.Frame):
         self._update_details("Использование памяти", labels)
 
     def _update_disk_details(self, system_info):
+    #"""Обновляет панель с детальной информацией о диске"""
         if not hasattr(self, 'system_monitor') or self.system_monitor is None:
-            return  
-
-        disk_info = self.system_monitor.get_disk_info()
-        if not disk_info: 
             return
 
-        disk_info = disk_info[0]  
-        total_gb = disk_info['total_space'] / (1024**3)
-        available_gb = disk_info['available_space'] / (1024**3)
-        used_gb = total_gb - available_gb
+        disk_info = self.system_monitor.get_disk_info()
+        if not disk_info:
+            labels = [("Состояние", "Диски не обнаружены")]
+        else:
+        # Берем первый диск (можно адаптировать для отображения всех дисков)
+            disk = disk_info[0]
+            total_gb = disk['total_space'] / (1024**3)
+            used_gb = (disk['total_space'] - disk['available_space']) / (1024**3)
+            free_gb = disk['available_space'] / (1024**3)
         
-        labels = [
-            ("Активное время", "0%"),
-            ("Средняя скорость отклика", "0 мс"),
-            ("Скорость записи", "0 КБ/с"),
-            ("Скорость чтения", "0 КБ/с"),
-            ("Активное время записи", "0%"),
-            ("Активное время чтения", "0%"),
-            ("Размер раздела", f"{total_gb:.1f} ГБ"),
-            ("Свободно места", f"{available_gb:.1f} ГБ"),
-            ("Используется места", f"{used_gb:.1f} ГБ"),
-            ("Тип раздела", "NTFS")
-        ]
-        
-        self._update_details(f"Диск ({disk_info['name']})", labels)
+            labels = [
+                ("Название диска", disk.get('name', 'N/A')),
+                ("Файловая система", disk.get('file_system', 'N/A')),
+                ("Общий размер", f"{total_gb:.1f} ГБ"),
+                ("Использовано", f"{used_gb:.1f} ГБ ({disk.get('percent', 0):.1f}%)"),
+                ("Свободно", f"{free_gb:.1f} ГБ"),
+                ("Скорость чтения", f"{disk.get('read_speed', 0)/1024:.1f} МБ/с"),
+                ("Скорость записи", f"{disk.get('write_speed', 0)/1024:.1f} МБ/с"),
+                ("Тип диска", disk.get('type', 'N/A')),
+                ("Секторов на кластер", str(disk.get('sectors_per_cluster', 'N/A'))),
+            ("Размер сектора", f"{disk.get('bytes_per_sector', 0)} байт")
+            ]
+    
+        self._update_details("Информация о диске", labels)
 
     def _update_ethernet_details(self, system_info):
         if not hasattr(self, 'system_monitor') or self.system_monitor is None:
