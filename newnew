@@ -10,25 +10,131 @@ import os
 class PerformanceTab(tk.Frame):
     def __init__(self, parent, system_monitor=None):
         super().__init__(parent)
-        self.system_monitor = system_monitor  
+        self.system_monitor = system_monitor
         self._data_lock = threading.Lock()
         self._update_lock = threading.Lock()
         self.is_dark_theme = parent.is_dark_theme if hasattr(parent, 'is_dark_theme') else False
-        self.init_data()
-        self.init_ui()
         
-    def init_data(self):
+        # Инициализация данных
         self.values = {
             'cpu': deque(maxlen=60),
             'memory': deque(maxlen=60),
             'disk': deque(maxlen=60),
             'network': deque(maxlen=60),
-            'gpu' : deque(maxlen=60)
+            'gpu': deque(maxlen=60)
         }
         self.current_metric = 'cpu'
         self._prev_values = {}
         self._last_update = 0
         self._update_interval = 0.5
+        
+        # Создаем элементы интерфейса
+        self.init_ui()
+        
+        # Добавляем индикатор загрузки
+        self.show_loading_indicator()
+        
+        # Запускаем загрузку данных
+        self.start_data_loading()
+
+    def show_loading_indicator(self):
+        """Показывает индикатор загрузки"""
+        self.loading_frame = tk.Frame(self, bg='#1e1e1e')
+        self.loading_frame.place(relx=0.5, rely=0.5, anchor="center")
+        
+        # Круговой индикатор
+        self.loading_canvas = tk.Canvas(
+            self.loading_frame, 
+            width=60, 
+            height=60, 
+            bg='#1e1e1e', 
+            highlightthickness=0
+        )
+        self.loading_canvas.pack()
+        self.loading_arc = self.loading_canvas.create_arc(
+            10, 10, 50, 50,
+            start=0,
+            extent=0,
+            outline="#3794ff",
+            width=3,
+            style=tk.ARC
+        )
+        self.loading_angle = 0
+        self.animate_loading()
+        
+        # Текст загрузки
+        loading_label = tk.Label(
+            self.loading_frame, 
+            text="Загрузка данных...", 
+            font=("Arial", 12), 
+            bg="#1e1e1e", 
+            fg="white"
+        )
+        loading_label.pack(pady=(10, 0))
+
+    def animate_loading(self):
+        """Анимация индикатора загрузки"""
+        self.loading_angle = (self.loading_angle + 10) % 360
+        self.loading_canvas.itemconfig(
+            self.loading_arc, 
+            start=self.loading_angle, 
+            extent=min(300, self.loading_angle + 60)
+        )
+        self.after(50, self.animate_loading)
+
+    def start_data_loading(self):
+        """Запускает загрузку данных в отдельном потоке"""
+        def load_data():
+            # Загружаем данные CPU
+            cpu_info = self.system_monitor._get_cpu_info()
+            
+            # Загружаем данные памяти
+            memory_info = self.system_monitor._get_memory_info()
+            
+            # Загружаем данные диска
+            disk_info = self.system_monitor.get_disk_info()
+            
+            # Загружаем данные сети
+            network_info = self.system_monitor.get_network_info()
+            
+            # Загружаем данные GPU
+            gpu_info = self.system_monitor.get_gpu_info()
+            
+            # Формируем системную информацию
+            system_info = {
+                'cpu_percent': cpu_info['usage'],
+                'memory': {
+                    'total': memory_info['total'],
+                    'available': memory_info['available']
+                },
+                'disk_usage': disk_info[0]['percent'] if disk_info else 0,
+                'network_usage': network_info[0]['send_speed'] if network_info else 0,
+                'gpu_usage': gpu_info['load'] if gpu_info else 0,
+                'process_count': cpu_info['process_count'],
+                'thread_count': 0,
+                'uptime': cpu_info['work_time']
+            }
+            
+            # Обновляем интерфейс в основном потоке
+            self.after(0, self.finish_loading, system_info)
+        
+        # Запускаем в отдельном потоке
+        threading.Thread(target=load_data, daemon=True).start()
+
+    def finish_loading(self, system_info):
+        """Завершает загрузку и показывает данные"""
+        # Скрываем индикатор загрузки
+        self.loading_frame.destroy()
+        
+        # Инициализируем данные
+        self.init_data()
+        
+        # Обновляем данные
+        self.update_data(system_info)
+        
+        # Показываем основной интерфейс
+        self.init_ui()
+        
         
     def init_ui(self):
         self.grid_rowconfigure(0, weight=1)
@@ -67,13 +173,15 @@ class PerformanceTab(tk.Frame):
         
         right_panel = tk.Frame(self, bg='#1e1e1e')
         right_panel.grid(row=0, column=1, sticky='nsew')
+        right_panel.grid_rowconfigure(0, weight=0)  
+        right_panel.grid_rowconfigure(1, weight=1)
         
         self.chart_title = tk.Label(right_panel, text="ЦП", bg='#1e1e1e', fg='white', 
                                    font=('Arial', 28, 'bold'))
-        self.chart_title.pack(anchor='w', padx=10, pady=(10, 0))
+        self.chart_title.pack(anchor='w', padx=10, pady=(15, 0))
         
-        self.canvas = tk.Canvas(right_panel, bg='#1e1e1e', highlightthickness=0, height=250)
-        self.canvas.pack(fill='x', expand=False, padx=15, pady=10)
+        self.canvas = tk.Canvas(right_panel, bg='#1e1e1e', highlightthickness=0, height=300)  
+        self.canvas.pack(fill='x', expand=False, padx=15, pady=(0, 20))
         
         
         self.info_labels = {}
@@ -87,18 +195,15 @@ class PerformanceTab(tk.Frame):
             ("Время работы", "0:00:00")
         ]
 
-        # Создаем фрейм для деталей под графиком
         self.details_frame = tk.Frame(right_panel, bg='#1e1e1e', highlightbackground="#3c3c3c", highlightthickness=1)
-        self.details_frame.pack(fill='both', expand=True, padx=10, pady=10)
+        self.details_frame.pack(fill='both', expand=True, padx=10, pady=(0, 20))
         
-        # Заголовок деталей
         self.details_header = tk.Label(self.details_frame, font=("Arial", 12, "bold"), 
                                      bg="#1e1e1e", fg="white")
-        self.details_header.pack(anchor="w", padx=10, pady=(15, 1))
+        self.details_header.pack(anchor="w", padx=10, pady=(10, 5))
         
-        # Контейнер для деталей
         self.details_container = tk.Frame(self.details_frame, bg='#1e1e1e')
-        self.details_container.pack(fill="both", expand=True, padx=5)
+        self.details_container.pack(fill="both", expand=True, padx=5, pady=5)
         
     def switch_metric(self, metric):
         self.current_metric = metric
@@ -120,7 +225,6 @@ class PerformanceTab(tk.Frame):
         self._current_color = colors[metric]
         self.update_chart()
     
-        # Обновляем информацию в зависимости от выбранной метрики
         if metric == 'cpu':
             self._update_cpu_details(self._last_system_info if hasattr(self, '_last_system_info') else {})
         elif metric == 'memory':
@@ -138,7 +242,6 @@ class PerformanceTab(tk.Frame):
             return
             
         with self._data_lock:
-            # Сохраняем последние данные системы
             self._last_system_info = system_info
             
             metrics_data = self.calculate_metrics(system_info)
@@ -174,14 +277,15 @@ class PerformanceTab(tk.Frame):
         height = self.canvas.winfo_height()
         self.canvas.delete('all')
         
-        # Сетка
-        PADDING = 5
+        padding = 10
+        chart_width = width - 2*padding
+        chart_height = height - 2*padding
+
         for i in range(0, 101, 20):
-            y = height - (i/100 * (height - 20))
-            self.canvas.create_line(0, y, width, y, fill='#3c3c3c')
-            self.canvas.create_text(5, y, text=f"{i}%", fill='white', anchor='w')
+            y = height - padding - (i/100 * (height - 20))
+            self.canvas.create_line(padding, y, width - padding, y, fill='#3c3c3c')
+            self.canvas.create_text(padding - 5, y, text=f"{i}%", fill='white', anchor='w')
         
-        # График
         values = list(self.values[self.current_metric])
         if len(values) > 1:
             points = []
@@ -198,14 +302,12 @@ class PerformanceTab(tk.Frame):
         self.info_labels["Процессы"].config(text=str(system_info.get('process_count', 0)))
         self.info_labels["Потоки"].config(text=str(system_info.get('thread_count', 0)))
     
-    # Форматируем время работы
         uptime = system_info.get('uptime', 0)
         hours = int(uptime // 3600)
         minutes = int((uptime % 3600) // 60)
         seconds = int(uptime % 60)
         self.info_labels["Время работы"].config(text=f"{hours}:{minutes:02d}:{seconds:02d}")
-        
-    # Обновляем детали в зависимости от текущей метрики
+
         if self.current_metric == 'cpu':
             self._update_cpu_details(system_info)
         elif self.current_metric == 'memory':
@@ -218,7 +320,6 @@ class PerformanceTab(tk.Frame):
             self._update_gpu_details(system_info)
 
     def _update_cpu_details(self, system_info):
-    #"""Обновляет панель с детальной информацией о процессоре"""
         if not hasattr(self, 'system_monitor') or self.system_monitor is None:
             return  
 
@@ -249,7 +350,6 @@ class PerformanceTab(tk.Frame):
         used_gb = memory_info['used'] / (1024**3)
         available_gb = memory_info['available'] / (1024**3)
         
-        # Обновляем метки с актуальными данными
         labels = [
             ("Используется (сжатая)", f"{used_gb:.1f} ГБ (188 МБ)"),
             ("Доступно", f"{available_gb:.1f} ГБ"),
@@ -266,7 +366,6 @@ class PerformanceTab(tk.Frame):
         self._update_details("Использование памяти", labels)
 
     def _update_disk_details(self, system_info):
-    #"""Обновляет панель с детальной информацией о диске"""
         if not hasattr(self, 'system_monitor') or self.system_monitor is None:
             return
 
@@ -274,7 +373,6 @@ class PerformanceTab(tk.Frame):
         if not disk_info:
             labels = [("Состояние", "Диски не обнаружены")]
         else:
-        # Берем первый диск (можно адаптировать для отображения всех дисков)
             disk = disk_info[0]
             total_gb = disk['total_space'] / (1024**3)
             used_gb = (disk['total_space'] - disk['available_space']) / (1024**3)
@@ -300,11 +398,9 @@ class PerformanceTab(tk.Frame):
             return
 
         network_info = self.system_monitor.get_network_info()
-        if not network_info:  # Если данных нет
+        if not network_info: 
             labels = [("Состояние", "Не подключено")]
         else:
-        # Предполагаем, что network_info - словарь с нужными полями
-        # Если это список, нужно обращаться по индексу или перебирать элементы
             labels = [
                 ("Отправлено", f"{network_info.get('send_speed', 0)/1024:.1f} КБ/с"),
                 ("Получено", f"{network_info.get('recv_speed', 0)/1024:.1f} КБ/с"),
@@ -341,15 +437,11 @@ class PerformanceTab(tk.Frame):
         self._update_details("Информация о GPU", labels)
 
     def _update_details(self, header_text, labels):
-        """Обновляет содержимое панели деталей"""
-        # Обновляем заголовок
         self.details_header.config(text=header_text)
         
-        # Очищаем старые метки
         for widget in self.details_container.winfo_children():
             widget.destroy()
         
-        # Создаем новые метки
         for i, (name, value) in enumerate(labels):
             row = i // 2
             col = i % 2
@@ -413,9 +505,14 @@ class TaskManager:
         self.notebook.add(self.processes_frame, text="Процессы")
         self._setup_processes_tab()
 
-    # Вкладка производительности (передаем system_monitor)
-        self.performance_tab = PerformanceTab(self.notebook, self.system_monitor)
+    # Вкладка производительности 
+        self.performance_tab = PerformanceTab(self.notebook)
         self.notebook.add(self.performance_tab, text="Производительность")
+        def set_monitor():
+            self.performance_tab.system_monitor = self.system_monitor
+            self.performance_tab.start_data_loading()
+    
+        self.root.after(100, set_monitor)
 
     # Вкладка служб
         self.services_frame = tk.Frame(self.notebook, bg="#2d2d2d")
